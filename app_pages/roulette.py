@@ -22,6 +22,12 @@ with st.expander("Payouts"):
 | Bet | Pays |
 |---|---|
 | Single number (0 to 36) | 35 to 1 |
+| Split: line between 2 numbers (incl. 0/1, 0/2, 0/3) | 17 to 1 |
+| Street: bottom edge under a column of 3 | 11 to 1 |
+| Trio: 0/1/2 or 0/2/3, where 0 meets a row line | 11 to 1 |
+| Corner: where 4 numbers meet | 8 to 1 |
+| First four: 0/1/2/3, bottom corner of 0 and 1 | 8 to 1 |
+| Six line: bottom edge between two columns | 5 to 1 |
 | Dozen (1st / 2nd / 3rd 12) or Column (2 to 1) | 2 to 1 |
 | Red / Black, Odd / Even, 1 to 18 / 19 to 36 | 1 to 1 |
 

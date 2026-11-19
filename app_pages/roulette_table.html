@@ -22,7 +22,12 @@
 
   /* felt */
   .felt { background:var(--felt); padding:14px; border-radius:14px; border:6px solid var(--rim); overflow-x:auto; }
-  .board { min-width:620px; }
+  .board { min-width:620px; position:relative; }
+  /* inside-bet hotspots sitting on the lines between numbers */
+  .spot.hot { position:absolute; border:none; border-radius:50%; background:transparent; z-index:4; }
+  .spot.hot:hover, .spot.hot.over { background:rgba(244,208,63,.85); transform:none; box-shadow:0 0 8px var(--gold); }
+  .spot.hot .stack { width:24px; height:24px; font-size:9px; border-width:2px; }
+  .spot.cover { box-shadow:0 0 0 3px var(--gold) inset; filter:brightness(1.25); }
   .grid { display:grid; grid-template-columns:46px repeat(12, 1fr) 54px; grid-template-rows:repeat(3, 46px); gap:3px; }
   .outside { display:grid; gap:3px; margin-top:3px; margin-left:49px; margin-right:57px; }
   .spot { position:relative; display:flex; align-items:center; justify-content:center; color:var(--ink);
@@ -86,7 +91,7 @@
       <button id="reset">Reset $</button>
       <button id="spin" class="primary">Spin</button>
     </div>
-    <div class="hint">Drag a chip onto the felt, or tap a chip then tap a spot. Right-click (or long-press) a stack to pick it up.</div>
+    <div class="hint">Drag a chip onto the felt, or tap a chip then tap a spot. Drop on a line between numbers to split, a corner for 4 numbers, or the bottom edge for a street / six line. Right-click (or long-press) a stack to pick it up.</div>
   </div>
   <div class="history" id="history"></div>
 </div>
@@ -153,6 +158,67 @@ grid.appendChild(spotEl("n0", "0", "num green", "grid-row:1/span 3;grid-column:1
 [["low",""],["even",""],["red","red"],["black","black"],["odd",""],["high",""]]
   .forEach(([id, c]) => $("evens").appendChild(spotEl(id, SPOTS[id].label, "o " + c)));
 
+// ---- inside bets: hotspots on the lines between numbers ----
+// Each hotspot is anchored to geometry measured from the real number cells,
+// so it lines up at any width. kind -> payout (European rules).
+const INSIDE = { Split: 17, Street: 11, Trio: 11, Corner: 8, "First four": 8, "Six line": 5 };
+const HOT = [];  // { el, place() }
+const board = document.querySelector(".board");
+function box(n) {
+  const r = document.querySelector(`[data-spot="n${n}"]`).getBoundingClientRect();
+  const b = board.getBoundingClientRect();
+  return { l: r.left - b.left, r: r.right - b.left, t: r.top - b.top, b: r.bottom - b.top,
+           cx: (r.left + r.right) / 2 - b.left, cy: (r.top + r.bottom) / 2 - b.top,
+           w: r.width, h: r.height };
+}
+// pos() returns [centerX, centerY, width, height] in board coordinates
+function addInside(kind, nums, pos) {
+  nums = [...nums].sort((a, b) => a - b);
+  const id = "i" + nums.join("-");
+  if (SPOTS[id]) return;
+  SPOTS[id] = { label: `${kind} ${nums.join("/")}`, payout: INSIDE[kind], wins: x => nums.includes(x), nums };
+  const el = spotEl(id, "", "hot");
+  el.title = `${SPOTS[id].label} (pays ${INSIDE[kind]} to 1)`;
+  board.appendChild(el);
+  HOT.push({ el, place: () => {
+    const [x, y, w, h] = pos();
+    Object.assign(el.style, { left: x - w / 2 + "px", top: y - h / 2 + "px", width: w + "px", height: h + "px" });
+  }});
+}
+const EDGE = 14, DOT = 16;
+const mid = (a, b) => (a + b) / 2;
+for (let c = 0; c < 12; c++) {
+  [3, 2, 1].forEach(o => {
+    const n = c * 3 + o;
+    if (c < 11)  // number to its right
+      addInside("Split", [n, n + 3], () => { const a = box(n), b = box(n + 3); return [mid(a.r, b.l), a.cy, EDGE, a.h * .5]; });
+    if (o > 1) { // number below it
+      addInside("Split", [n, n - 1], () => { const a = box(n), b = box(n - 1); return [a.cx, mid(a.b, b.t), a.w * .5, EDGE]; });
+      if (c < 11)
+        addInside("Corner", [n, n - 1, n + 3, n + 2], () => { const a = box(n), b = box(n + 2); return [mid(a.r, b.l), mid(a.b, b.t), DOT, DOT]; });
+    }
+  });
+  const bottom = c * 3 + 1;  // street / six line chips sit on the bottom edge
+  addInside("Street", [bottom, bottom + 1, bottom + 2], () => { const a = box(bottom); return [a.cx, a.b + 2, a.w * .5, EDGE]; });
+  if (c < 11)
+    addInside("Six line", [bottom, bottom + 1, bottom + 2, bottom + 3, bottom + 4, bottom + 5],
+      () => { const a = box(bottom), b = box(bottom + 3); return [mid(a.r, b.l), a.b + 2, DOT, DOT]; });
+}
+[3, 2, 1].forEach(o =>
+  addInside("Split", [0, o], () => { const z = box(0), a = box(o); return [mid(z.r, a.l), a.cy, EDGE, a.h * .5]; }));
+addInside("Trio", [0, 2, 3], () => { const z = box(0), a = box(3), b = box(2); return [mid(z.r, a.l), mid(a.b, b.t), DOT, DOT]; });
+addInside("Trio", [0, 1, 2], () => { const z = box(0), a = box(2), b = box(1); return [mid(z.r, a.l), mid(a.b, b.t), DOT, DOT]; });
+addInside("First four", [0, 1, 2, 3], () => { const z = box(0), a = box(1); return [mid(z.r, a.l), a.b + 2, DOT, DOT]; });
+const layoutHot = () => HOT.forEach(h => h.place());
+layoutHot();
+window.addEventListener("resize", layoutHot);
+if (window.ResizeObserver) new ResizeObserver(layoutHot).observe(board);
+
+// light up the numbers an inside bet covers while hovering / dragging over it
+function cover(id, on) {
+  (SPOTS[id].nums || []).forEach(n => document.querySelector(`[data-spot="n${n}"]`).classList.toggle("cover", on));
+}
+
 // ---- chip rack ----
 const rack = $("rack");
 DENOMS.slice().reverse().forEach(v => {
@@ -194,9 +260,11 @@ function pickUp(spot) {
 
 document.querySelectorAll(".spot").forEach(el => {
   const id = el.dataset.spot;
-  el.addEventListener("dragover", e => { if (!spinning) { e.preventDefault(); el.classList.add("over"); } });
-  el.addEventListener("dragleave", () => el.classList.remove("over"));
-  el.addEventListener("drop", e => { e.preventDefault(); el.classList.remove("over"); place(id, +e.dataTransfer.getData("text/plain")); });
+  el.addEventListener("dragover", e => { if (!spinning) { e.preventDefault(); el.classList.add("over"); cover(id, true); } });
+  el.addEventListener("dragleave", () => { el.classList.remove("over"); cover(id, false); });
+  el.addEventListener("drop", e => { e.preventDefault(); el.classList.remove("over"); cover(id, false); place(id, +e.dataTransfer.getData("text/plain")); });
+  el.addEventListener("mouseenter", () => cover(id, true));
+  el.addEventListener("mouseleave", () => cover(id, false));
   el.addEventListener("click", () => place(id, selected));
   el.addEventListener("contextmenu", e => { e.preventDefault(); pickUp(id); });
   let t; // long-press to pick up on touch screens
