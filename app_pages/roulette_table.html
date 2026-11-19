@@ -1,0 +1,287 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root { --felt:#0b5d2a; --rim:#5a3a1a; --line:#e8e2c8; --ink:#f5f0dc; --gold:#f4d03f; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:"Source Sans Pro", system-ui, sans-serif; background:transparent; color:#222;
+         user-select:none; -webkit-user-select:none; }
+  .wrap { max-width:900px; margin:0 auto; }
+
+  /* top bar */
+  .bar { display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between; margin-bottom:10px; }
+  .stats { display:flex; gap:22px; }
+  .stat small { display:block; font-size:12px; color:#777; }
+  .stat b { font-size:24px; }
+  .result { display:flex; align-items:center; gap:10px; min-height:52px; }
+  .ball { width:48px; height:48px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+          color:#fff; font-weight:800; font-size:20px; border:3px solid var(--gold); background:#444; transition:background .1s; }
+  .msg { font-weight:700; font-size:15px; }
+  .msg.win { color:#1e8449; } .msg.lose { color:#c0392b; }
+
+  /* felt */
+  .felt { background:var(--felt); padding:14px; border-radius:14px; border:6px solid var(--rim); overflow-x:auto; }
+  .board { min-width:620px; }
+  .grid { display:grid; grid-template-columns:46px repeat(12, 1fr) 54px; grid-template-rows:repeat(3, 46px); gap:3px; }
+  .outside { display:grid; gap:3px; margin-top:3px; margin-left:49px; margin-right:57px; }
+  .spot { position:relative; display:flex; align-items:center; justify-content:center; color:var(--ink);
+          border:1px solid var(--line); border-radius:4px; font-weight:700; cursor:pointer; transition:transform .08s, box-shadow .08s; }
+  .spot.num { font-size:15px; }
+  .spot.o { font-size:12px; padding:10px 0; }
+  .red { background:#c0392b; } .black { background:#1c1c1c; } .green { background:#1e8449; }
+  .spot.over { box-shadow:0 0 0 3px #fff inset; transform:scale(1.04); }
+  .spot.hit { outline:4px solid var(--gold); outline-offset:-2px; box-shadow:0 0 18px var(--gold); z-index:3; }
+  .spot.won .stack { animation:pulse .6s ease-in-out 3; }
+  @keyframes pulse { 50% { transform:translate(-50%,-50%) scale(1.3); } }
+
+  /* chips */
+  .chip { width:44px; height:44px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+          font-weight:800; font-size:13px; color:#fff; border:4px dashed rgba(255,255,255,.85);
+          box-shadow:0 2px 4px rgba(0,0,0,.4); cursor:grab; }
+  .chip:active { cursor:grabbing; }
+  .c1 { background:#7f8c8d; } .c5 { background:#c0392b; } .c25 { background:#1e8449; }
+  .c100 { background:#111; } .c500 { background:#6c3483; }
+  .stack { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:30px; height:30px;
+           font-size:10px; border-width:3px; z-index:2; pointer-events:none; }
+
+  /* rack + controls */
+  .rack { display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin-top:12px; }
+  .rack .chip.sel { outline:3px solid var(--gold); outline-offset:2px; }
+  .hint { font-size:12px; color:#777; flex-basis:100%; }
+  .btns { margin-left:auto; display:flex; gap:8px; }
+  button { font:inherit; font-weight:600; padding:9px 18px; border-radius:8px; border:1px solid #ccc; background:#fff; cursor:pointer; }
+  button.primary { background:#c8102e; border-color:#c8102e; color:#fff; min-width:110px; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  .history { margin-top:10px; font-size:14px; display:flex; gap:5px; flex-wrap:wrap; align-items:center; }
+  .history span.h { width:26px; height:26px; border-radius:50%; display:inline-flex; align-items:center; justify-content:center;
+                    color:#fff; font-size:11px; font-weight:700; }
+
+  @media (prefers-color-scheme: dark) {
+    body { color:#eee; } .stat small, .hint { color:#aaa; }
+    button { background:#262730; color:#eee; border-color:#555; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="bar">
+    <div class="stats">
+      <div class="stat"><small>Balance</small><b id="balance">$1,000</b></div>
+      <div class="stat"><small>On the table</small><b id="staked">$0</b></div>
+    </div>
+    <div class="result"><div class="ball" id="ball">?</div><div class="msg" id="msg">Place your bets</div></div>
+  </div>
+
+  <div class="felt"><div class="board">
+    <div class="grid" id="grid"></div>
+    <div class="outside" id="dozens" style="grid-template-columns:repeat(3,1fr)"></div>
+    <div class="outside" id="evens" style="grid-template-columns:repeat(6,1fr)"></div>
+  </div></div>
+
+  <div class="rack" id="rack">
+    <div class="btns">
+      <button id="undo">Undo</button>
+      <button id="clear">Clear</button>
+      <button id="reset">Reset $</button>
+      <button id="spin" class="primary">Spin</button>
+    </div>
+    <div class="hint">Drag a chip onto the felt, or tap a chip then tap a spot. Right-click (or long-press) a stack to pick it up.</div>
+  </div>
+  <div class="history" id="history"></div>
+</div>
+
+<script>
+const RED = new Set([1,3,5,7,9,12,14,16,18,19,21,23,25,27,30,32,34,36]);
+const START = 1000;
+const DENOMS = [1, 5, 25, 100, 500];
+const colorOf = n => n === 0 ? "green" : RED.has(n) ? "red" : "black";
+
+// spot id -> { label, payout, wins(n) }
+const SPOTS = {};
+for (let n = 0; n <= 36; n++) SPOTS["n" + n] = { label: String(n), payout: 35, wins: x => x === n };
+Object.assign(SPOTS, {
+  col1: { label: "Column 1", payout: 2, wins: x => x > 0 && x % 3 === 1 },
+  col2: { label: "Column 2", payout: 2, wins: x => x > 0 && x % 3 === 2 },
+  col3: { label: "Column 3", payout: 2, wins: x => x > 0 && x % 3 === 0 },
+  d1: { label: "1st 12", payout: 2, wins: x => x >= 1 && x <= 12 },
+  d2: { label: "2nd 12", payout: 2, wins: x => x >= 13 && x <= 24 },
+  d3: { label: "3rd 12", payout: 2, wins: x => x >= 25 && x <= 36 },
+  low: { label: "1 to 18", payout: 1, wins: x => x >= 1 && x <= 18 },
+  even: { label: "Even", payout: 1, wins: x => x > 0 && x % 2 === 0 },
+  red: { label: "Red", payout: 1, wins: x => RED.has(x) },
+  black: { label: "Black", payout: 1, wins: x => x > 0 && !RED.has(x) },
+  odd: { label: "Odd", payout: 1, wins: x => x % 2 === 1 },
+  high: { label: "19 to 36", payout: 1, wins: x => x >= 19 && x <= 36 },
+});
+
+// ---- state (balance persists per browser when storage is available) ----
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+};
+let balance = store.get("roulette.balance", START);
+let history = store.get("roulette.history", []);
+let bets = {};          // spot id -> amount
+let log = [];           // [spotId, amount] for undo
+let selected = 5;       // chip chosen for tap-to-place
+let spinning = false;
+
+const $ = id => document.getElementById(id);
+const money = v => "$" + v.toLocaleString();
+const staked = () => Object.values(bets).reduce((a, b) => a + b, 0);
+
+// ---- build the board ----
+function spotEl(id, text, cls, style) {
+  const d = document.createElement("div");
+  d.className = "spot " + cls;
+  d.dataset.spot = id;
+  d.textContent = text;
+  if (style) d.style.cssText = style;
+  return d;
+}
+const grid = $("grid");
+grid.appendChild(spotEl("n0", "0", "num green", "grid-row:1/span 3;grid-column:1"));
+[3, 2, 1].forEach((off, r) => {
+  for (let c = 0; c < 12; c++) {
+    const n = c * 3 + off;
+    grid.appendChild(spotEl("n" + n, n, "num " + colorOf(n), `grid-row:${r + 1};grid-column:${c + 2}`));
+  }
+  grid.appendChild(spotEl("col" + off, "2 to 1", "o", `grid-row:${r + 1};grid-column:14`));
+});
+["d1", "d2", "d3"].forEach(id => $("dozens").appendChild(spotEl(id, SPOTS[id].label, "o")));
+[["low",""],["even",""],["red","red"],["black","black"],["odd",""],["high",""]]
+  .forEach(([id, c]) => $("evens").appendChild(spotEl(id, SPOTS[id].label, "o " + c)));
+
+// ---- chip rack ----
+const rack = $("rack");
+DENOMS.slice().reverse().forEach(v => {
+  const c = document.createElement("div");
+  c.className = "chip c" + v;
+  c.textContent = v;
+  c.draggable = true;
+  c.dataset.value = v;
+  c.addEventListener("dragstart", e => { e.dataTransfer.setData("text/plain", v); e.dataTransfer.effectAllowed = "copy"; });
+  c.addEventListener("click", () => { selected = v; renderRack(); });
+  rack.prepend(c);
+});
+function renderRack() {
+  rack.querySelectorAll(".chip").forEach(c => {
+    const v = +c.dataset.value;
+    c.classList.toggle("sel", v === selected);
+    c.style.opacity = v > balance ? .35 : 1;
+    c.draggable = v <= balance && !spinning;
+  });
+}
+
+// ---- placing bets ----
+function place(spot, amount) {
+  if (spinning || !SPOTS[spot] || amount <= 0) return;
+  if (amount > balance) { flash("Not enough balance for that chip", "lose"); return; }
+  balance -= amount;
+  bets[spot] = (bets[spot] || 0) + amount;
+  log.push([spot, amount]);
+  clearOutcome();
+  render();
+}
+function pickUp(spot) {
+  if (spinning || !bets[spot]) return;
+  balance += bets[spot];
+  delete bets[spot];
+  log = log.filter(([s]) => s !== spot);
+  render();
+}
+
+document.querySelectorAll(".spot").forEach(el => {
+  const id = el.dataset.spot;
+  el.addEventListener("dragover", e => { if (!spinning) { e.preventDefault(); el.classList.add("over"); } });
+  el.addEventListener("dragleave", () => el.classList.remove("over"));
+  el.addEventListener("drop", e => { e.preventDefault(); el.classList.remove("over"); place(id, +e.dataTransfer.getData("text/plain")); });
+  el.addEventListener("click", () => place(id, selected));
+  el.addEventListener("contextmenu", e => { e.preventDefault(); pickUp(id); });
+  let t; // long-press to pick up on touch screens
+  el.addEventListener("touchstart", () => { t = setTimeout(() => { pickUp(id); t = "done"; }, 550); }, { passive: true });
+  el.addEventListener("touchend", e => { if (t === "done") e.preventDefault(); clearTimeout(t); });
+  el.addEventListener("touchmove", () => clearTimeout(t), { passive: true });
+});
+
+// ---- rendering ----
+function chipClass(amount) { let c = DENOMS[0]; for (const d of DENOMS) if (amount >= d) c = d; return "c" + c; }
+function render() {
+  document.querySelectorAll(".spot").forEach(el => {
+    el.querySelector(".stack")?.remove();
+    const amt = bets[el.dataset.spot];
+    if (amt) {
+      const s = document.createElement("div");
+      s.className = "chip stack " + chipClass(amt);
+      s.textContent = amt >= 1000 ? (amt / 1000).toFixed(1).replace(".0", "") + "k" : amt;
+      el.appendChild(s);
+    }
+  });
+  $("balance").textContent = money(balance);
+  $("staked").textContent = money(staked());
+  $("spin").disabled = spinning || staked() === 0;
+  $("undo").disabled = spinning || !log.length;
+  $("clear").disabled = spinning || !log.length;
+  $("history").innerHTML = history.length
+    ? "<b>Recent:</b>" + history.map(n => `<span class="h ${colorOf(n)}">${n}</span>`).join("")
+    : "";
+  renderRack();
+  store.set("roulette.balance", balance);
+  store.set("roulette.history", history);
+}
+function flash(text, cls) { const m = $("msg"); m.textContent = text; m.className = "msg " + (cls || ""); }
+function clearOutcome() { document.querySelectorAll(".hit,.won").forEach(e => e.classList.remove("hit", "won")); }
+const BALL = { red: "#c0392b", black: "#1c1c1c", green: "#1e8449" };
+function setBall(n) { const b = $("ball"); b.textContent = n ?? "?"; b.style.background = n === null ? "#444" : BALL[colorOf(n)]; }
+
+// ---- controls ----
+$("undo").onclick = () => {
+  const last = log.pop(); if (!last) return;
+  const [spot, amt] = last;
+  bets[spot] -= amt; if (bets[spot] <= 0) delete bets[spot];
+  balance += amt; render();
+};
+$("clear").onclick = () => { balance += staked(); bets = {}; log = []; render(); };
+$("reset").onclick = () => { bets = {}; log = []; balance = START; history = []; clearOutcome(); setBall(null); flash("Place your bets"); render(); };
+
+$("spin").onclick = () => {
+  if (spinning || !staked()) return;
+  spinning = true; clearOutcome(); flash("No more bets..."); render();
+  const result = Math.floor(Math.random() * 37);
+  let tick = 0, delay = 40;
+  const roll = () => {
+    tick++;
+    setBall(tick < 26 ? Math.floor(Math.random() * 37) : result);
+    if (tick < 26) { delay *= 1.08; setTimeout(roll, delay); } else settle(result);
+  };
+  roll();
+};
+
+function settle(n) {
+  let returned = 0, wagered = staked();
+  for (const [spot, amt] of Object.entries(bets)) {
+    if (SPOTS[spot].wins(n)) {
+      returned += amt * (SPOTS[spot].payout + 1);
+      document.querySelector(`[data-spot="${spot}"]`).classList.add("won");
+    }
+  }
+  document.querySelector(`[data-spot="n${n}"]`).classList.add("hit");
+  balance += returned;
+  history = [n, ...history].slice(0, 15);
+  const net = returned - wagered;
+  flash(net > 0 ? `${n} ${colorOf(n)}! You won ${money(net)}` : net === 0 ? `${n} ${colorOf(n)}. Broke even.` : `${n} ${colorOf(n)}. Lost ${money(-net)}`,
+        net >= 0 ? "win" : "lose");
+  // Leave winning chips visible briefly, then clear the table for the next round.
+  setTimeout(() => {
+    bets = {}; log = []; spinning = false;
+    if (balance <= 0) flash("You're broke. Hit Reset $ to keep playing.", "lose");
+    render();
+  }, 1600);
+  render();
+}
+
+render();
+</script>
+</body>
+</html>
